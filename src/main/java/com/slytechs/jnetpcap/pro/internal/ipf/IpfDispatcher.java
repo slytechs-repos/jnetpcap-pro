@@ -17,46 +17,45 @@
  */
 package com.slytechs.jnetpcap.pro.internal.ipf;
 
-import java.lang.foreign.MemoryAddress;
+import org.jnetpcap.internal.PcapDispatcher;
 
-import com.slytechs.jnetpcap.pro.PacketDispatcher;
+import com.slytechs.jnetpcap.pro.IpfReassembler;
+import com.slytechs.jnetpcap.pro.internal.PacketDispatcher;
 
 /**
  * @author Sly Technologies Inc
  * @author repos@slytechs.com
- * @author Mark Bednarczyk
- *
  */
 public interface IpfDispatcher extends PacketDispatcher {
 
-	static IpfDispatcher ipfDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
-			IpfConfig config) {
+	static IpfDispatcher newInstance(
+			PcapDispatcher pcap,
+			PacketDispatcher packet,
+			IpfReassembler config) {
 
-		if (isNativeIpfDispatcherSupported())
-			return nativeIpfDispatcher(pcapHandle, breakDispatch, config);
+		if (isNativeSupported())
+			return newNativeInstance(pcap, packet, config);
 		else
-			return javaIpfDispatcher(pcapHandle, breakDispatch, config);
+			return newJavaInstance(pcap, packet, config);
 	}
 
-	static IpfDispatcher javaIpfDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
-			IpfConfig config) {
-		return new JavaIpfDispatcher(pcapHandle, breakDispatch, config);
+	static IpfDispatcher newJavaInstance(
+			PcapDispatcher pcap,
+			PacketDispatcher packet,
+			IpfReassembler config) {
+		return new JavaIpfDispatcher(pcap, packet, config);
 	}
 
-	static boolean isNativeIpfDispatcherSupported() {
-		return NativeIpfDispatcher.isNativeSupported();
+	static boolean isNativeSupported() {
+		return IpfDispatcherNative.isNativeSupported();
 	}
 
-	static IpfDispatcher nativeIpfDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
-			IpfConfig config) {
+	static IpfDispatcher newNativeInstance(
+			PcapDispatcher pcap,
+			PacketDispatcher packet,
+			IpfReassembler config) {
 
-		return new NativeIpfDispatcher(pcapHandle, breakDispatch, config);
+		return new IpfDispatcherNative(pcap, packet, config);
 	}
 
 }

@@ -15,20 +15,21 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  */
-package com.slytechs.jnetpcap.pro;
+package com.slytechs.jnetpcap.pro.internal;
 
 import java.lang.foreign.MemoryAddress;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.MemorySession;
+import java.nio.ByteBuffer;
+import java.util.concurrent.TimeoutException;
 
-import org.jnetpcap.internal.PcapDispatcher;
-import org.jnetpcap.internal.PcapHeaderABI;
+import org.jnetpcap.PcapException;
 
-import com.slytechs.jnetpcap.pro.internal.JavaPacketDispatcher;
-import com.slytechs.jnetpcap.pro.internal.PacketStatistics;
-import com.slytechs.protocol.Frame.FrameNumber;
+import com.slytechs.jnetpcap.pro.CaptureStatistics;
+import com.slytechs.jnetpcap.pro.PcapProHandler;
+import com.slytechs.protocol.Packet;
 import com.slytechs.protocol.descriptor.PacketDissector;
-import com.slytechs.protocol.meta.PacketFormat;
 import com.slytechs.protocol.pack.core.constants.PacketDescriptorType;
-import com.slytechs.protocol.runtime.time.TimestampUnit;
 
 /**
  * Packet dispatcher with protocol level support.
@@ -36,19 +37,7 @@ import com.slytechs.protocol.runtime.time.TimestampUnit;
  * @author Sly Technologies Inc
  * @author repos@slytechs.com
  */
-public interface PacketDispatcher extends PcapDispatcher {
-
-	public class PacketDispatcherConfig {
-
-		public int portNo;
-		public FrameNumber frameNo = FrameNumber.of();
-		public TimestampUnit timestampUnit = TimestampUnit.PCAP_MICRO;
-		public PacketFormat formatter;
-		public PacketDissector dissector;
-		public PacketDescriptorType descriptorType;
-		public PcapHeaderABI abi;
-
-	}
+public interface PacketDispatcher {
 
 	/**
 	 * Checks if is native packet dispatcher supported.
@@ -68,11 +57,9 @@ public interface PacketDispatcher extends PcapDispatcher {
 	 * @return the packet dispatcher
 	 */
 	static PacketDispatcher javaPacketDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
 			PacketDispatcherConfig config) {
 
-		return new JavaPacketDispatcher(pcapHandle, breakDispatch, config);
+		return new MainPacketDispatcher(config);
 	}
 
 	/**
@@ -84,8 +71,6 @@ public interface PacketDispatcher extends PcapDispatcher {
 	 * @return the packet dispatcher
 	 */
 	static PacketDispatcher nativePacketDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
 			PacketDispatcherConfig config) {
 		throw new UnsupportedOperationException();
 	}
@@ -99,14 +84,12 @@ public interface PacketDispatcher extends PcapDispatcher {
 	 * @return the packet dispatcher
 	 */
 	static PacketDispatcher packetDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
 			PacketDispatcherConfig config) {
 
 		if (isNativePacketDispatcherSupported())
-			return nativePacketDispatcher(pcapHandle, breakDispatch, config);
+			return nativePacketDispatcher(config);
 		else
-			return javaPacketDispatcher(pcapHandle, breakDispatch, config);
+			return javaPacketDispatcher(config);
 	}
 
 	/**
@@ -145,5 +128,23 @@ public interface PacketDispatcher extends PcapDispatcher {
 	 */
 	<U> int loopPacket(int count, PcapProHandler.OfPacket<U> sink, U user);
 
-	PacketStatistics getPacketStatistics();
+	CaptureStatistics getCaptureStatistics();
+
+	<U> Packet processPacket(
+			MemoryAddress pcapHdr,
+			MemoryAddress pktData,
+			MemorySession session);
+
+	<U> Packet processPacket(
+			ByteBuffer buffer,
+			MemorySegment mpacket,
+			int caplen,
+			int wirelen,
+			long timestamp);
+
+	void onNativeCallbackException(Throwable e, int caplen, int wirelen);
+
+	Packet nextExPacket() throws PcapException, TimeoutException;
+
+	Packet nextPacket() throws PcapException;
 }

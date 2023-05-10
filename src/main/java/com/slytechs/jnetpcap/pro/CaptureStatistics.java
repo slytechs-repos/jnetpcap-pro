@@ -15,17 +15,19 @@
  * License for the specific language governing permissions and limitations under
  * the License.
  */
-package com.slytechs.jnetpcap.pro.internal;
+package com.slytechs.jnetpcap.pro;
+
+import com.slytechs.jnetpcap.pro.internal.CaptureStatisticsImpl;
 
 /**
  * @author Sly Technologies Inc
  * @author repos@slytechs.com
  *
  */
-public interface PacketStatistics {
+public interface CaptureStatistics {
 
-	public static PacketStatistics newInstance() {
-		return new PacketStatisticsImpl();
+	public static CaptureStatistics newInstance() {
+		return new CaptureStatisticsImpl();
 	}
 
 	/**

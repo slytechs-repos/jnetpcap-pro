@@ -19,10 +19,13 @@ package com.slytechs.jnetpcap.pro.internal.ipf;
 
 import java.lang.foreign.MemoryAddress;
 
+import org.jnetpcap.internal.PcapDispatcher;
 import org.jnetpcap.internal.PcapForeignDowncall;
 import org.jnetpcap.internal.PcapForeignInitializer;
 
-import com.slytechs.jnetpcap.pro.internal.JavaPacketDispatcher;
+import com.slytechs.jnetpcap.pro.IpfReassembler;
+import com.slytechs.jnetpcap.pro.internal.AbstractPacketDispatcher;
+import com.slytechs.jnetpcap.pro.internal.PacketDispatcher;
 
 /**
  * @author Sly Technologies Inc
@@ -30,8 +33,8 @@ import com.slytechs.jnetpcap.pro.internal.JavaPacketDispatcher;
  * @author Mark Bednarczyk
  *
  */
-public class NativeIpfDispatcher
-		extends JavaPacketDispatcher
+public class IpfDispatcherNative
+		extends AbstractPacketDispatcher
 		implements IpfDispatcher {
 
 	private MemoryAddress ipfTable;
@@ -41,18 +44,18 @@ public class NativeIpfDispatcher
 	 * @param breakDispatch
 	 * @param descriptorType
 	 */
-	public NativeIpfDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
-			PacketDispatcherConfig config) {
+	public IpfDispatcherNative(
+			PcapDispatcher pcap,
+			PacketDispatcher packet,
+			IpfReassembler config) {
 
-		super(pcapHandle, breakDispatch, config);
+		super(packet, pcap);
 	}
 
 	private static final PcapForeignDowncall ipf_allocate_table;
 
 	static {
-		try (var foreign = new PcapForeignInitializer(NativeIpfDispatcher.class)) {
+		try (var foreign = new PcapForeignInitializer(IpfDispatcherNative.class)) {
 			ipf_allocate_table = foreign.downcall("ipf_allocate_table(IJ)A");
 		}
 	}

@@ -22,10 +22,13 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.MemorySession;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.concurrent.TimeoutException;
 
-import org.jnetpcap.internal.StandardPcapDispatcher;
+import org.jnetpcap.PcapException;
+import org.jnetpcap.internal.PcapDispatcher;
+import org.jnetpcap.util.PcapPacketRef;
 
-import com.slytechs.jnetpcap.pro.PacketDispatcher;
+import com.slytechs.jnetpcap.pro.CaptureStatistics;
 import com.slytechs.jnetpcap.pro.PcapProHandler;
 import com.slytechs.protocol.Packet;
 import com.slytechs.protocol.descriptor.PacketDescriptor;
@@ -40,8 +43,7 @@ import com.slytechs.protocol.pack.core.constants.PacketDescriptorType;
  * @author Mark Bednarczyk
  *
  */
-public class JavaPacketDispatcher
-		extends StandardPcapDispatcher
+public class MainPacketDispatcher
 		implements PacketDispatcher {
 
 	/** The Constant DESC_BUFFER_SIZE. */
@@ -58,7 +60,9 @@ public class JavaPacketDispatcher
 
 	protected final PacketDispatcherConfig config;
 
-	protected final PacketStatisticsImpl stats = (PacketStatisticsImpl) PacketStatistics.newInstance();
+	protected final CaptureStatisticsImpl stats = (CaptureStatisticsImpl) CaptureStatistics.newInstance();
+
+	protected PcapDispatcher pcapDispatcher;
 
 	/**
 	 * Instantiates a new packet dispatcher.
@@ -67,11 +71,8 @@ public class JavaPacketDispatcher
 	 * @param breakDispatch  the break dispatch
 	 * @param descriptorType the descriptor type
 	 */
-	public JavaPacketDispatcher(
-			MemoryAddress pcapHandle,
-			Runnable breakDispatch,
+	public MainPacketDispatcher(
 			PacketDispatcherConfig config) {
-		super(pcapHandle, breakDispatch);
 
 		this.config = config;
 		this.singletonDescBuffer = ByteBuffer
@@ -79,6 +80,10 @@ public class JavaPacketDispatcher
 				.order(ByteOrder.nativeOrder());
 
 		this.singletonPacket = new Packet(config.descriptorType.newDescriptor());
+	}
+
+	public void setPcapDispatcher(PcapDispatcher pcapDispatcher) {
+		this.pcapDispatcher = pcapDispatcher;
 	}
 
 	/**
@@ -154,7 +159,7 @@ public class JavaPacketDispatcher
 	 */
 	@Override
 	public <U> int dispatchPacket(int count, PcapProHandler.OfPacket<U> sink, U user) {
-		return super.dispatchNative(count, (ignore, pcapHdr, pktData) -> {
+		return pcapDispatcher.dispatchNative(count, (ignore, pcapHdr, pktData) -> {
 
 			try (var session = MemorySession.openShared()) {
 
@@ -167,7 +172,8 @@ public class JavaPacketDispatcher
 		}, MemoryAddress.NULL); // We don't pass user object to native dispatcher
 	}
 
-	protected <U> Packet processPacket(
+	@Override
+	public <U> Packet processPacket(
 			MemoryAddress pcapHdr,
 			MemoryAddress pktData,
 			MemorySession session) {
@@ -178,6 +184,7 @@ public class JavaPacketDispatcher
 		 */
 		int caplen = 0, wirelen = 0;
 		try {
+
 			/* Pcap header fields */
 			caplen = config.abi.captureLength(pcapHdr);
 			wirelen = config.abi.wireLength(pcapHdr);
@@ -190,18 +197,19 @@ public class JavaPacketDispatcher
 
 			Packet packet = createSingletonPacket(mpkt, caplen, wirelen, timestamp);
 
-			incPacketReceived(caplen, wirelen);
+			stats.incReceived(caplen, wirelen, 1);
 
 			return packet;
 
 		} catch (Throwable e) {
-			incPacketDropped(caplen, wirelen);
+			stats.incDropped(caplen, wirelen, 1);
 			onNativeCallbackException(e, caplen, wirelen);
 			return null;
 		}
 	}
 
-	protected <U> Packet processPacket(
+	@Override
+	public <U> Packet processPacket(
 			ByteBuffer buffer,
 			MemorySegment mpacket,
 			int caplen,
@@ -254,7 +262,7 @@ public class JavaPacketDispatcher
 	 */
 	@Override
 	public <U> int loopPacket(int count, PcapProHandler.OfPacket<U> sink, U user) {
-		return super.loopNative(count, (ignore, pcapHdr, pktData) -> {
+		return pcapDispatcher.loopNative(count, (ignore, pcapHdr, pktData) -> {
 
 			/*
 			 * Initialize outside the try-catch to attempt to read caplen for any exceptions
@@ -286,22 +294,23 @@ public class JavaPacketDispatcher
 		}, MemoryAddress.NULL);
 	}
 
-	protected void onNativeCallbackException(Throwable e, int caplen, int wirelen) {
+	@Override
+	public void onNativeCallbackException(Throwable e, int caplen, int wirelen) {
 		if (e instanceof RuntimeException runtime)
 			onNativeCallbackException(runtime, caplen, wirelen);
 		else
-			onNativeCallbackException(new IllegalStateException("unable to process packet", e));
+			pcapDispatcher.onNativeCallbackException(new IllegalStateException("unable to process packet", e));
 	}
 
 	private void onNativeCallbackException(RuntimeException e, int caplen, int wirelen) {
 		stats.incDropped(caplen, wirelen, 1);
 
-		super.onNativeCallbackException(e);
+		pcapDispatcher.onNativeCallbackException(e);
 	}
 
 	/**
 	 * @return
-	 * @see com.slytechs.jnetpcap.pro.internal.PacketStatistics#getDroppedCaplenCount()
+	 * @see com.slytechs.jnetpcap.pro.CaptureStatistics#getDroppedCaplenCount()
 	 */
 	public long getDroppedCaplenCount() {
 		return stats.getDroppedCaplenCount();
@@ -309,7 +318,7 @@ public class JavaPacketDispatcher
 
 	/**
 	 * @return
-	 * @see com.slytechs.jnetpcap.pro.internal.PacketStatistics#getDroppedPacketCount()
+	 * @see com.slytechs.jnetpcap.pro.CaptureStatistics#getDroppedPacketCount()
 	 */
 	public long getDroppedPacketCount() {
 		return stats.getDroppedPacketCount();
@@ -317,7 +326,7 @@ public class JavaPacketDispatcher
 
 	/**
 	 * @return
-	 * @see com.slytechs.jnetpcap.pro.internal.PacketStatistics#getDroppedWirelenCount()
+	 * @see com.slytechs.jnetpcap.pro.CaptureStatistics#getDroppedWirelenCount()
 	 */
 	public long getDroppedWirelenCount() {
 		return stats.getDroppedWirelenCount();
@@ -325,7 +334,7 @@ public class JavaPacketDispatcher
 
 	/**
 	 * @return
-	 * @see com.slytechs.jnetpcap.pro.internal.PacketStatistics#getReceivedCaplenCount()
+	 * @see com.slytechs.jnetpcap.pro.CaptureStatistics#getReceivedCaplenCount()
 	 */
 	public long getReceivedCaplenCount() {
 		return stats.getReceivedCaplenCount();
@@ -333,7 +342,7 @@ public class JavaPacketDispatcher
 
 	/**
 	 * @return
-	 * @see com.slytechs.jnetpcap.pro.internal.PacketStatistics#getReceivedPacketCount()
+	 * @see com.slytechs.jnetpcap.pro.CaptureStatistics#getReceivedPacketCount()
 	 */
 	public long getReceivedPacketCount() {
 		return stats.getReceivedPacketCount();
@@ -341,18 +350,91 @@ public class JavaPacketDispatcher
 
 	/**
 	 * @return
-	 * @see com.slytechs.jnetpcap.pro.internal.PacketStatistics#getReceivedWirelenCount()
+	 * @see com.slytechs.jnetpcap.pro.CaptureStatistics#getReceivedWirelenCount()
 	 */
 	public long getReceivedWirelenCount() {
 		return stats.getReceivedWirelenCount();
 	}
 
 	/**
-	 * @see com.slytechs.jnetpcap.pro.PacketDispatcher#getPacketStatistics()
+	 * @see com.slytechs.jnetpcap.pro.PacketDispatcher#getCaptureStatistics()
 	 */
 	@Override
-	public PacketStatistics getPacketStatistics() {
+	public CaptureStatistics getCaptureStatistics() {
 		return stats;
+	}
+
+	private MemorySession oneTimeSession;
+
+	/**
+	 * @see com.slytechs.jnetpcap.pro.internal.PacketDispatcher#nextExPacket()
+	 */
+	@Override
+	public Packet nextExPacket() throws PcapException, TimeoutException {
+		PcapPacketRef packetRef = pcapDispatcher.nextEx();
+
+		MemoryAddress pcapHdr = packetRef.header().address();
+		MemoryAddress pktData = packetRef.data().address();
+
+		int caplen = 0, wirelen = 0;
+
+		/* Pcap header fields */
+		caplen = config.abi.captureLength(pcapHdr);
+		wirelen = config.abi.wireLength(pcapHdr);
+		long tvSec = config.abi.tvSec(pcapHdr);
+		long tvUsec = config.abi.tvUsec(pcapHdr);
+
+		long timestamp = config.timestampUnit.ofSecond(tvSec, tvUsec);
+
+		MemorySegment mpkt = MemorySegment.ofAddress(pktData, caplen, getOnetimeMemorySession());
+
+		Packet packet = createSingletonPacket(mpkt, caplen, wirelen, timestamp);
+
+		stats.incReceived(caplen, wirelen, 1);
+
+		return packet;
+	}
+
+	/**
+	 * Gets the onetime memory session. The memory session mimics how Pcap next and
+	 * nextEx returned packet's behave. They are only valid until the next call.
+	 *
+	 * @return the onetime memory session
+	 */
+	private MemorySession getOnetimeMemorySession() {
+		if (oneTimeSession != null)
+			oneTimeSession.close();
+
+		return oneTimeSession = MemorySession.openShared();
+	}
+
+	/**
+	 * @see com.slytechs.jnetpcap.pro.internal.PacketDispatcher#nextPacket()
+	 */
+	@Override
+	public Packet nextPacket() throws PcapException {
+		PcapPacketRef packetRef = pcapDispatcher.next();
+
+		MemoryAddress pcapHdr = packetRef.header().address();
+		MemoryAddress pktData = packetRef.data().address();
+
+		int caplen = 0, wirelen = 0;
+
+		/* Pcap header fields */
+		caplen = config.abi.captureLength(pcapHdr);
+		wirelen = config.abi.wireLength(pcapHdr);
+		long tvSec = config.abi.tvSec(pcapHdr);
+		long tvUsec = config.abi.tvUsec(pcapHdr);
+
+		long timestamp = config.timestampUnit.ofSecond(tvSec, tvUsec);
+
+		MemorySegment mpkt = MemorySegment.ofAddress(pktData, caplen, getOnetimeMemorySession());
+
+		Packet packet = createSingletonPacket(mpkt, caplen, wirelen, timestamp);
+
+		stats.incReceived(caplen, wirelen, 1);
+
+		return packet;
 	}
 
 }
